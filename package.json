@@ -1,0 +1,35 @@
+{
+  "name": "silk-wasm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Play SILK v3 (.slk) audio directly in the browser via a pure-Rust WebAssembly decoder",
+  "main": "web/silk.js",
+  "exports": {
+    ".": "./web/silk.js",
+    "./wasm": "./web/silk_core.wasm"
+  },
+  "files": [
+    "web/silk.js",
+    "web/silk_core.wasm",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "./build.sh",
+    "build:debug": "./build.sh --debug",
+    "test": "node test/silk.test.mjs",
+    "test:rust": "CARGO_HOME=$PWD/.cargo-home cargo test --workspace",
+    "serve": "python3 -m http.server 8000 --directory web"
+  },
+  "keywords": [
+    "silk",
+    "slk",
+    "wechat",
+    "audio",
+    "codec",
+    "wasm",
+    "webassembly",
+    "decoder"
+  ],
+  "license": "MIT"
+}

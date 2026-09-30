@@ -1,0 +1,13 @@
+[package]
+name = "silk-cli"
+description = "CLI SILK v3 decoder (used to verify the Rust port against the C reference)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "silk-cli"
+path = "src/main.rs"
+
+[dependencies]
+silk-decoder = { path = "../silk-decoder" }

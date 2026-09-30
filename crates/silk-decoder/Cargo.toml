@@ -1,0 +1,13 @@
+[package]
+name = "silk-decoder"
+description = "Pure-Rust SILK v3 decoder core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "silk_decoder"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = "2"

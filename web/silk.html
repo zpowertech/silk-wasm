@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SILK → WASM 播放器</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #262b35;
+    --text: #e6e9ef;
+    --muted: #8b93a7;
+    --accent: #4f9cf9;
+    --accent-2: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 650; }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 13.5px; }
+  .sub code { color: var(--text); background: #232833; padding: 1px 5px; border-radius: 4px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 18px;
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit;
+    font-weight: 500;
+    color: #fff;
+    background: #2a3140;
+    border: 1px solid #39415a;
+    border-radius: 8px;
+    padding: 9px 15px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  button:hover:not(:disabled) { background: #333c4e; border-color: #4a5470; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #04121f; }
+  button.primary:hover:not(:disabled) { background: #63a9fb; border-color: #63a9fb; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  input[type=text] {
+    flex: 1 1 320px;
+    font: inherit;
+    color: var(--text);
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    min-width: 0;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  canvas {
+    width: 100%;
+    height: 120px;
+    display: block;
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0; font-size: 13.5px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+  #status { font-size: 13.5px; color: var(--muted); min-height: 1.6em; }
+  #status.error { color: #f87171; }
+  #status.ok { color: var(--accent-2); }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+  .hint code { background: #232833; padding: 1px 5px; border-radius: 4px; }
+  .bar { height: 4px; background: #232833; border-radius: 2px; overflow: hidden; margin-top: 12px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent-2); transition: width .1s linear; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SILK → WebAssembly 播放器</h1>
+  <p class="sub">
+    纯 Rust 实现的 SILK v3 解码器，编译为 WebAssembly，直接在浏览器里解码并播放
+    <code>.slk</code> / <code>.silk</code> 文件。无需服务端转码，无需 ffmpeg。
+  </p>
+
+  <div class="card">
+    <div class="row">
+      <button id="pick" class="primary">选择本地 .slk 文件</button>
+      <button id="loadUrl">从 URL 加载</button>
+      <input type="text" id="url" spellcheck="false"
+             value="https://cdn.0dwx.com/uploads/25666/chat/04f37f569201541f0106a3da2e37cf31.slk" />
+    </div>
+    <div class="hint">
+      若浏览器拦截 <code>http://</code> 资源（混合内容），请把该文件下载到本地后用左侧按钮打开，
+      或先通过 <code>python3 -m http.server</code> 在本机提供文件。
+    </div>
+    <div class="bar"><div id="progress"></div></div>
+    <div id="status">正在加载解码器…</div>
+  </div>
+
+  <div class="card">
+    <canvas id="wave" width="1500" height="240"></canvas>
+    <div class="row" style="margin-top: 14px">
+      <button id="play" disabled>▶ 播放</button>
+      <button id="stop" disabled>■ 停止</button>
+      <button id="streamPlay" disabled>⚡ 边下边播（流式）</button>
+      <button id="saveWav" disabled>⤓ 导出 WAV</button>
+    </div>
+    <input type="range" id="gain" min="0" max="200" value="100" style="width: 100%; margin-top: 14px" />
+    <div class="hint">音量 <span id="gainVal">100%</span></div>
+  </div>
+
+  <div class="card">
+    <dl>
+      <dt>文件</dt><dd id="i_name">—</dd>
+      <dt>大小</dt><dd id="i_size">—</dd>
+      <dt>采样率</dt><dd id="i_rate">—</dd>
+      <dt>时长</dt><dd id="i_dur">—</dd>
+      <dt>采样点</dt><dd id="i_n">—</dd>
+      <dt>数据包</dt><dd id="i_pkts">—</dd>
+      <dt>解码耗时</dt><dd id="i_time">—</dd>
+    </dl>
+  </div>
+
+  <p class="hint">
+    WASM 模块：<a href="./silk_core.wasm">silk_core.wasm</a> ·
+    JS 封装：<a href="./silk.js">silk.js</a> ·
+    解码器与 SILK 参考实现逐样本一致（bit-exact）。
+  </p>
+</div>
+
+<script type="module">
+import { loadSilk, playSilk, createSilkStreamPlayer, SilkError } from './silk.js';
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status');
+const progressEl = $('progress');
+
+let silk = null;
+let current = null;      // { samples, sampleRate, duration, name, size }
+let playback = null;     // { stop }
+let streamPlayer = null;
+
+function setStatus(msg, kind = '') {
+  statusEl.textContent = msg;
+  statusEl.className = kind;
+}
+function setProgress(frac) {
+  progressEl.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+}
+
+/** Draw the waveform of `samples` into the canvas. */
+function drawWave(samples) {
+  const canvas = $('wave');
+  const ctx = canvas.getContext('2d');
+  const { width: W, height: H } = canvas;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#10131a';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = '#2a3140';
+  ctx.beginPath();
+  ctx.moveTo(0, H / 2);
+  ctx.lineTo(W, H / 2);
+  ctx.stroke();
+
+  if (!samples.length) return;
+  const perPixel = samples.length / W;
+  ctx.strokeStyle = '#4f9cf9';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x < W; x++) {
+    const start = Math.floor(x * perPixel);
+    const end = Math.min(samples.length, Math.floor((x + 1) * perPixel));
+    let min = 32767, max = -32768;
+    for (let i = start; i < end; i++) {
+      const v = samples[i];
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (start >= end) continue;
+    const y1 = H / 2 - (max / 32768) * (H / 2 - 4);
+    const y2 = H / 2 - (min / 32768) * (H / 2 - 4);
+    ctx.moveTo(x + 0.5, y1);
+    ctx.lineTo(x + 0.5, y2);
+  }
+  ctx.stroke();
+}
+
+function stopAll() {
+  playback?.stop();
+  playback = null;
+  streamPlayer?.stop();
+  streamPlayer = null;
+  $('stop').disabled = true;
+}
+
+/** Decode `bytes`, update the UI, and enable the transport buttons. */
+function useBytes(bytes, name) {
+  const t0 = performance.now();
+  const audio = silk.decode(bytes);
+  const ms = performance.now() - t0;
+
+  current = { ...audio, name, size: bytes.length };
+  drawWave(audio.samples);
+
+  $('i_name').textContent = name;
+  $('i_size').textContent = `${bytes.length.toLocaleString()} 字节`;
+  $('i_rate').textContent = `${audio.sampleRate.toLocaleString()} Hz`;
+  $('i_dur').textContent = `${audio.duration.toFixed(3)} 秒`;
+  $('i_n').textContent = audio.samples.length.toLocaleString();
+  $('i_pkts').textContent = silk.packets(bytes).length.toLocaleString();
+  $('i_time').textContent = `${ms.toFixed(1)} ms`;
+
+  for (const id of ['play', 'stop', 'streamPlay', 'saveWav']) $(id).disabled = false;
+  $('stop').disabled = true;
+  setStatus(`解码完成：${audio.samples.length.toLocaleString()} 个采样点 @ ${audio.sampleRate} Hz`, 'ok');
+  return audio;
+}
+
+async function loadFromUrl(url) {
+  stopAll();
+  setStatus(`正在下载 ${url} …`);
+  setProgress(0.05);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    throw new Error(`下载失败（可能是混合内容或 CORS 限制）：${e.message}`);
+  }
+  if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`);
+
+  // Stream the download so the progress bar moves and memory stays bounded.
+  const total = Number(res.headers.get('content-length')) || 0;
+  const chunks = [];
+  let received = 0;
+  if (res.body) {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      setProgress(total ? received / total : 0.5);
+    }
+  } else {
+    chunks.push(new Uint8Array(await res.arrayBuffer()));
+  }
+  const bytes = new Uint8Array(received || chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of chunks) { bytes.set(c, off); off += c.length; }
+  setProgress(1);
+  const name = url.split('/').pop() || 'audio.slk';
+  return useBytes(bytes, name);
+}
+
+// ---- wire up the UI --------------------------------------------------------
+
+$('pick').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.slk,.silk,audio/*';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    stopAll();
+    setStatus(`正在读取 ${file.name} …`);
+    try {
+      useBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+    } catch (e) {
+      setStatus(`解码失败：${e.message}`, 'error');
+    }
+  });
+  input.click();
+});
+
+$('loadUrl').addEventListener('click', async () => {
+  try {
+    await loadFromUrl($('url').value.trim());
+  } catch (e) {
+    setStatus(e.message, 'error');
+    setProgress(0);
+  }
+});
+
+$('play').addEventListener('click', async () => {
+  if (!current) return;
+  stopAll();
+  try {
+    playback = await playSilk(current, { gain: Number($('gain').value) / 100 });
+    $('stop').disabled = false;
+    setStatus('播放中…（浏览器会把 16 kHz 重采样到声卡速率）', 'ok');
+    playback.source.onended = () => {
+      $('stop').disabled = true;
+      setStatus('播放结束', 'ok');
+    };
+  } catch (e) {
+    setStatus(`播放失败：${e.message}`, 'error');
+  }
+});
+
+$('stop').addEventListener('click', () => {
+  stopAll();
+  setStatus('已停止');
+});
+
+$('streamPlay').addEventListener('click', async () => {
+  // Demonstrate progressive playback: decode packet by packet and schedule each
+  // 20 ms frame as it becomes available.
+  const url = $('url').value.trim();
+  stopAll();
+  try {
+    setStatus('流式播放：正在下载…');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+
+    streamPlayer = await createSilkStreamPlayer(silk, {
+      gain: Number($('gain').value) / 100,
+      onFrame: (_, i) => {
+        const n = i + 1;
+        setProgress(n / 250);
+        if (n % 25 === 0) setStatus(`流式播放中… 已排入 ${n} 帧（每帧 20 ms）`, 'ok');
+      },
+    });
+    const stream = silk.stream();
+    const packets = silk.packets(bytes);
+    const rate = silk.detectSampleRate(bytes);
+    $('i_rate').textContent = `${rate.toLocaleString()} Hz`;
+    for (const p of packets) streamPlayer.push(p);
+    streamPlayer.end();
+    $('stop').disabled = false;
+    await streamPlayer.finished;
+    setStatus('流式播放结束', 'ok');
+    $('stop').disabled = true;
+  } catch (e) {
+    setStatus(`流式播放失败：${e.message}`, 'error');
+  }
+});
+
+$('saveWav').addEventListener('click', () => {
+  if (!current) return;
+  // Re-encode from the already-decoded samples.
+  const pcm = current.samples;
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const view = new DataView(buf);
+  const ascii = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  ascii(0, 'RIFF');
+  view.setUint32(4, 36 + pcm.length * 2, true);
+  ascii(8, 'WAVE'); ascii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, current.sampleRate, true);
+  view.setUint32(28, current.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, 'data');
+  view.setUint32(40, pcm.length * 2, true);
+  new Int16Array(buf, 44).set(pcm);
+
+  const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (current.name || 'audio').replace(/\.[^.]+$/, '') + '.wav';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+$('gain').addEventListener('input', (e) => {
+  $('gainVal').textContent = `${e.target.value}%`;
+});
+
+// ---- boot ------------------------------------------------------------------
+
+(async () => {
+  try {
+    silk = await loadSilk();
+    setStatus('解码器已就绪。请选择文件或点击“从 URL 加载”。', 'ok');
+  } catch (e) {
+    setStatus(`加载 WASM 失败：${e.message}`, 'error');
+    return;
+  }
+  // Try the bundled test file automatically; harmless if it is blocked.
+  const url = $('url').value.trim();
+  if (!url) return;
+  try {
+    await loadFromUrl(url);
+  } catch (e) {
+    setStatus(`自动加载测试文件失败（${e.message}）。请改用“选择本地 .slk 文件”。`, 'error');
+    setProgress(0);
+  }
+})();
+</script>
+</body>
+</html>
